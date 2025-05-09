@@ -1,88 +1,107 @@
 #!/bin/bash
 
-# mirror-switcher.sh — Fast Ubuntu Mirror Selector with ISP Preference
-# Author: @infoshayan (edit if desired)
-# Description: Uses your ISP's mirror if available; otherwise finds the fastest mirror based on your country
+# Ubuntu Fastest Repository Selector with ISP Preference
+# Author: @infoshayan — https://github.com/chainvpn/Ubuntu-Fastest-Repository-Same-ISP
 
-# Colors
+# === Config ===
+ISP_NAME="Shatel"
+ISP_DOMAIN="ubuntu.mirror.shatel.ir"
+ISP_URL="http://${ISP_DOMAIN}/ubuntu"
+LOG_FILE="/var/log/mirror-switcher.log"
+
+# === Colors ===
 GREEN='\033[0;32m'
-NC='\033[0m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 BOLD=$(tput bold)
 RESET=$(tput sgr0)
 
-# Fancy header
-clear
-echo -e "${GREEN}${BOLD}"
-echo "╔════════════════════════════════════════════╗"
-echo "║        🧠 Ubuntu Fast Mirror Switcher      ║"
-echo "╚════════════════════════════════════════════╝"
-echo -e "${RESET}"
+# === Functions ===
 
-# Animated progress bar
 progress_bar() {
-    local duration=${1:-3}
-    local spin='|/-\\'
-    echo -n "[*] Working: "
-    for ((i=0; i<duration*10; i++)); do
-        i=$((i % 4))
-        printf "\b${spin:$i:1}"
-        sleep 0.1
+    local duration=${1:-2}
+    local msg=${2:-""}
+    echo -ne "${YELLOW}${msg}${NC} "
+    echo -ne "["
+    for i in $(seq 1 20); do
+        echo -ne "#"
+        sleep $(bc -l <<< "$duration/20")
     done
-    echo -e "\b✔"
+    echo -e "] ✔"
 }
 
-# Get Ubuntu codename
+log() {
+    echo -e "$(date '+%F %T') | $1" >> "$LOG_FILE"
+}
+
+fatal() {
+    echo -e "${RED}[✘] $1${NC}"
+    log "[FATAL] $1"
+    exit 1
+}
+
+banner() {
+    clear
+    echo -e "${GREEN}${BOLD}"
+    echo "╔═════════════════════════════════════════════════════╗"
+    echo "║      🧠 Ubuntu Fast Mirror Switcher (Pro)           ║"
+    echo "╚═════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# === Start Script ===
+banner
+log "Started mirror-switcher"
+
 UBUNTU_CODENAME=$(lsb_release -cs)
-echo -e "[+] Detected Ubuntu version: ${BOLD}$UBUNTU_CODENAME${RESET}"
-progress_bar 1
+COUNTRY=$(curl -s https://ipinfo.io/country || echo "US")
 
-# Get country code
-COUNTRY=$(curl -s https://ipinfo.io/country)
-echo -e "[+] Your country: ${BOLD}$COUNTRY${RESET}"
-progress_bar 1
+echo -e "[*] Detected Ubuntu Codename: ${BOLD}${UBUNTU_CODENAME}${RESET}"
+progress_bar 0.5 "Checking Ubuntu version"
 
-# Set ISP info
-ISP_NAME="Shatel"
-ISP_DOMAIN="ubuntu.mirror.shatel.ir"
-ISP_REPO="http://${ISP_DOMAIN}/ubuntu"
+echo -e "[*] Your Country: ${BOLD}${COUNTRY}${RESET}"
+progress_bar 0.5 "Getting Geo Info"
 
-echo -e "[*] Checking for ISP mirror: ${BOLD}$ISP_REPO${RESET}"
-progress_bar 2
+echo -e "[*] Trying ISP Mirror (${ISP_NAME}) at ${BOLD}${ISP_URL}${RESET}"
+progress_bar 1 "Testing ISP mirror"
 
-if ping -c 1 -W 1 $ISP_DOMAIN &>/dev/null; then
-    echo -e "[✔] Found mirror at ${BOLD}$ISP_DOMAIN${RESET}. Using it..."
-    REPO_URL=$ISP_REPO
+if curl -s --head --request GET "${ISP_URL}/dists/${UBUNTU_CODENAME}/Release" | grep "200 OK" > /dev/null; then
+    echo -e "${GREEN}[✔] ISP Mirror is available!${NC}"
+    log "Using ISP mirror $ISP_URL"
+    REPO_URL="$ISP_URL"
 else
-    echo -e "[✘] ISP mirror not found. Finding fastest global mirror..."
-    if ! command -v netselect-apt &>/dev/null; then
-        echo -e "[*] Installing netselect-apt..."
-        sudo apt update && sudo apt install netselect-apt -y
-    fi
+    echo -e "${YELLOW}[!] ISP Mirror not available. Finding fastest mirror...${NC}"
+    progress_bar 1 "Installing netselect-apt"
+
+    sudo apt update > /dev/null
+    sudo apt install -y netselect-apt > /dev/null || fatal "Could not install netselect-apt"
 
     sudo netselect-apt -c "$COUNTRY" -n "$UBUNTU_CODENAME"
-    if [ -f sources.list ]; then
-        echo -e "[✔] Fastest mirror found and saved to sources.list"
-        sudo cp sources.list /etc/apt/sources.list
-        sudo apt update
-        exit 0
-    else
-        echo -e "[✘] netselect-apt failed. Exiting."
-        exit 1
-    fi
+    [ ! -f sources.list ] && fatal "netselect-apt failed to generate sources.list"
+
+    sudo cp sources.list /etc/apt/sources.list
+    echo -e "${GREEN}[✔] Fastest mirror set via netselect-apt${NC}"
+    log "Used fastest mirror via netselect-apt"
+    sudo apt update
+    exit 0
 fi
 
-# Create sources.list using ISP or custom mirror
-echo -e "[*] Replacing sources.list with: ${BOLD}$REPO_URL${RESET}"
-progress_bar 2
+# === Update sources.list with selected mirror ===
+echo -e "[*] Applying new mirror to sources.list"
+progress_bar 1 "Writing to sources.list"
 
 cat <<EOF | sudo tee /etc/apt/sources.list >/dev/null
-deb $REPO_URL $UBUNTU_CODENAME main restricted universe multiverse
-deb $REPO_URL $UBUNTU_CODENAME-updates main restricted universe multiverse
-deb $REPO_URL $UBUNTU_CODENAME-backports main restricted universe multiverse
-deb $REPO_URL $UBUNTU_CODENAME-security main restricted universe multiverse
+deb ${REPO_URL} ${UBUNTU_CODENAME} main restricted universe multiverse
+deb ${REPO_URL} ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+deb ${REPO_URL} ${UBUNTU_CODENAME}-security main restricted universe multiverse
+deb ${REPO_URL} ${UBUNTU_CODENAME}-backports main restricted universe multiverse
 EOF
 
-# Final update
-echo -e "[*] Updating package lists from new mirror..."
+# === Final update ===
+echo -e "[*] Updating APT sources..."
+progress_bar 2 "apt update"
 sudo apt update
-echo -e "${GREEN}${BOLD}✅ Mirror switch complete! Your APT is now turbocharged. 🛰️${RESET}"
+
+echo -e "${GREEN}${BOLD}✅ Done! APT mirror has been updated successfully.${RESET}"
+log "Mirror switch complete for $UBUNTU_CODENAME"
