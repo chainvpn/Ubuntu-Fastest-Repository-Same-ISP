@@ -110,6 +110,10 @@ REPO_URL=$(check_speed_and_find_best_mirror)
 echo -e "[*] Applying the best mirror to sources.list"
 progress_bar 1 "Writing to sources.list"
 
+# Clean the current sources.list before updating
+sudo rm -f /etc/apt/sources.list
+
+# Add the best mirror to sources.list
 cat <<EOF | sudo tee /etc/apt/sources.list >/dev/null
 deb ${REPO_URL} ${UBUNTU_CODENAME} main restricted universe multiverse
 deb ${REPO_URL} ${UBUNTU_CODENAME}-updates main restricted universe multiverse
